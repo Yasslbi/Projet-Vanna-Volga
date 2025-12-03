@@ -161,3 +161,78 @@ Intuition : Détenir des euros rapporte plus (rf ↑), donc il devient moins che
 
 # Si les taux EUR baissent (rf ↓) 
 (rd − rf) augmente, donc : 𝐹 ↑ Le forward EUR/USD monte.
+
+# CONVERSION DELTA -> STRIKE
+
+delta = 0.25
+a = -1 * st.norm.ppf(delta * (1 / rf_discFact))  
+
+# Contexte : 
+
+En FX, un 25Δ Put signifie :
+
+Le marché te dit par exemple :
+
+“Put 25 Delta = 12.5% de volatilité”
+
+Mais il NE te donne PAS le strike du put 25Δ.
+
+Donc on doit retrouver d1, puis retrouver K.
+
+En FX, la formule du delta d’un CALL européen est :
+
+<img width="467" height="135" alt="Capture d’écran 2025-12-03 à 17 36 59" src="https://github.com/user-attachments/assets/31d66e87-b78f-473b-9544-57f6a6ea89b7" />
+
+--<img width="585" height="492" alt="Capture d’écran 2025-12-03 à 17 37 52" src="https://github.com/user-attachments/assets/73d49275-d035-40a6-976c-2390234b3ed9" />
+
+def d_1(F, X, vol, t):
+    return (math.log(F / X) + 0.5 * vol**2 * t) / (vol * math.sqrt(t))
+
+def d_2(F, X, vol, t):
+    return d_1(F, X, vol, t) - vol * math.sqrt(t)
+    
+<img width="585" height="440" alt="Capture d’écran 2025-12-03 à 17 43 11" src="https://github.com/user-attachments/assets/a9ad85db-ed66-43b5-8c2c-5e75c5f05ce8" />
+
+
+À chaque itération x, tu travailles avec une maturité T[x] et :
+
+- un forward F[x]
+- une vol 25D put Vol_25D_PUT[x]
+- une vol ATM Vol_ATM[x]
+- une vol 25D call Vol_25D_CALL[x]
+- le a[x] associé à 25Δ via la formule delta → d1
+
+Et tu reconstruis les trois strikes correspondants.
+- X_3 = np.array([])  # CALL 25D
+- X_1 = np.array([])  # PUT 25D
+- X_2 = np.array([])  # ATM
+
+<img width="585" height="158" alt="Capture d’écran 2025-12-03 à 17 44 02" src="https://github.com/user-attachments/assets/fdc43f5a-6200-4eaf-8d93-0a63c8982a61" />
+
+for x in range(len(T)):
+
+    PUT 25D
+    X_25D_PUT = F[x] * math.exp(
+        -(a[x] * Vol_25D_PUT[x] * math.sqrt(T[x])) +
+        0.5 * Vol_25D_PUT[x]**2 * T[x]
+    )
+    X_1 = np.append(X_1, X_25D_PUT)
+
+    # ATM
+    X_ATM = F[x] * math.exp(0.5 * Vol_ATM[x]**2 * T[x])
+    X_2 = np.append(X_2, X_ATM)
+
+    # CALL 25D
+    X_25D_CALL = F[x] * math.exp(
+        +(a[x] * Vol_25D_CALL[x] * math.sqrt(T[x])) +
+        0.5 * Vol_25D_CALL[x]**2 * T[x]
+    )
+    X_3 = np.append(X_3, X_25D_CALL)
+
+Ces trois points (K_put25,σ_put25),(K_atm,σ_atm),(K_call25 ,σ_call25) sont ensuite utilisés par Vanna-Volga pour :
+
+- reconstruire la volatilité à n’importe quel strike entre les deux ailes
+- capturer le skew (déséquilibre put/call)
+- capturer la convexité (butterfly)
+
+C’est la base de la reconstitution de ton smile FX.
