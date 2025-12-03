@@ -411,3 +411,46 @@ Ce qui donne un smile :
 - plus extrême dans les ailes
 - stable et sans vol négative
 - cohérent avec Put25, ATM, Call25
+
+# CONSTRUCTION DE LA SURFACE : STRIKE × TENOR
+
+opt_strike = (1 + np.arange(-0.15, 0.16, 0.01)) * S
+vanna_volga_implied = np.zeros((31, 16), dtype=float)
+
+for i in range(31):
+    for j in range(16):
+        vanna_volga_implied[i, j] = VolSurface(
+            F[j],
+            opt_strike[i],
+            T[j],
+            X_1[j],
+            X_2[j],
+            X_3[j],
+            Vol_25D_PUT[j],
+            Vol_ATM[j],
+            Vol_25D_CALL[j]
+        )
+df = pd.DataFrame(vanna_volga_implied)
+df.to_csv("ameya.csv", index=False)
+
+
+<img width="639" height="186" alt="Capture d’écran 2025-12-03 à 18 44 07" src="https://github.com/user-attachments/assets/c40db584-cf8a-4b38-8248-8f5e03cec108" />
+
+Création d’une matrice vide pour stocker la surface : 
+
+vanna_volga_implied = np.zeros((31, 16), dtype=float)
+
+Double boucle (strikes × maturités) :
+
+ for i in range(31):
+    for j in range(16):
+        vanna_volga_implied[i, j] = VolSurface(
+
+Tu passes toute la grille :
+
+- i = strike index (0 → 30)
+- j = maturité index (0 → 15)
+
+En chaque point (i, j), tu appelles VolSurface() pour calculer ne volatilité implicite à partir des 3 points marché (Put25, ATM, Call25).
+
+
