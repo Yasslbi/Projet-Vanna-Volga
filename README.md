@@ -164,8 +164,39 @@ Intuition : Détenir des euros rapporte plus (rf ↑), donc il devient moins che
 
 # CONVERSION DELTA -> STRIKE
 
+
 delta = 0.25
-a = -1 * st.norm.ppf(delta * (1 / rf_discFact))  
+a = -1 * st.norm.ppf(delta * (1 / rf_discFact))  # d1 associé au delta FX
+
+def d_1(F, X, vol, t):
+    return (math.log(F / X) + 0.5 * vol**2 * t) / (vol * math.sqrt(t))
+
+def d_2(F, X, vol, t):
+    return d_1(F, X, vol, t) - vol * math.sqrt(t)
+
+X_3 = np.array([])  # CALL 25D
+X_1 = np.array([])  # PUT 25D
+X_2 = np.array([])  # ATM
+
+for x in range(len(T)):
+
+    # PUT 25D
+    X_25D_PUT = F[x] * math.exp(
+        -(a[x] * Vol_25D_PUT[x] * math.sqrt(T[x])) +
+        0.5 * Vol_25D_PUT[x]**2 * T[x]
+    )
+    X_1 = np.append(X_1, X_25D_PUT)
+
+    # ATM
+    X_ATM = F[x] * math.exp(0.5 * Vol_ATM[x]**2 * T[x])
+    X_2 = np.append(X_2, X_ATM)
+
+    # CALL 25D
+    X_25D_CALL = F[x] * math.exp(
+        +(a[x] * Vol_25D_CALL[x] * math.sqrt(T[x])) +
+        0.5 * Vol_25D_CALL[x]**2 * T[x]
+    )
+    X_3 = np.append(X_3, X_25D_CALL)
 
 # Contexte : 
 
@@ -236,3 +267,147 @@ Ces trois points (K_put25,σ_put25),(K_atm,σ_atm),(K_call25 ,σ_call25) sont en
 - capturer la convexité (butterfly)
 
 C’est la base de la reconstitution de ton smile FX.
+
+# METHODE VANNA-VOLGA
+
+def VolSurface(F, X, t, X_1, X_2, X_3, sig_PUT, sig_ATM, sig_CALL):
+
+    # Poids log-métriques (structure du smile)
+    z1 = (math.log(X_2 / X) * math.log(X_3 / X)) / \
+         (math.log(X_2 / X_1) * math.log(X_3 / X_1))
+
+    z2 = (math.log(X / X_1) * math.log(X_3 / X)) / \
+         (math.log(X_2 / X_1) * math.log(X_3 / X_2))
+
+    z3 = (math.log(X / X_1) * math.log(X / X_2)) / \
+         (math.log(X_3 / X_1) * math.log(X_3 / X_2))
+
+    First_Ord_Approx = (
+        z1 * sig_PUT + z2 * sig_ATM + z3 * sig_CALL
+    ) - sig_ATM
+
+    Second_Ord_Approx = (
+        z1 * d_1(F, X_1, sig_PUT, t) * d_2(F, X_1, sig_PUT, t) * (sig_PUT - sig_ATM)**2 +
+        z3 * d_1(F, X_3, sig_CALL, t) * d_2(F, X_3, sig_CALL, t) * (sig_CALL - sig_ATM)**2
+    )
+
+    d1_d2 = d_1(F, X, sig_ATM, t) * d_2(F, X, sig_ATM, t)
+
+    vol = sig_ATM + (
+        -sig_ATM + math.sqrt(
+            sig_ATM**2 + d1_d2 * (2 * sig_ATM * First_Ord_Approx +
+                                 Second_Ord_Approx)
+        )
+    ) / d1_d2
+
+    return vol
+
+
+L’interpolation “Vanna-Volga” utilisée en construction de smile FX repose sur deux blocs complémentaires :
+
+un terme de premier ordre, qui reproduit la pente (skew) du smile
+
+un terme de second ordre, qui injecte la courbure (convexité) réelle que l’on observe dans les ailes FX.
+
+Les deux blocs utilisent comme base les trois points liquides du marché FX :
+
+- Put 25Δ → (K1,σ1)
+- ATM → (K2,σ2)
+- Call 25Δ → (K3,σ3)
+
+et permettent d’estimer une volatilité implicite pour n’importe quel strike 𝐾.
+
+# 1) LES POIDS LOG-MÉTRIQUES
+
+<img width="277" height="200" alt="Capture d’écran 2025-12-03 à 18 02 46" src="https://github.com/user-attachments/assets/8294d0f5-9ad4-4d2d-b614-dab6060951ad" />
+
+Les poids log-métriques disent simplement :
+
+“À quel point ton strike K ressemble plus à Put25, à l’ATM ou au Call25.”
+C’est juste une manière de mesurer la position de K dans le smile.
+
+# Le premier ordre reproduit la pente du skew du marché autour de l'ATM
+<img width="469" height="107" alt="Capture d’écran 2025-12-03 à 18 05 18" src="https://github.com/user-attachments/assets/6c7e5d83-3074-4f9f-8b92-153234314561" />
+
+Tu combines les trois vols du marché pour reproduire la variation du smile,
+puis tu retires la vol ATM pour recentrer l’interpolation sur l’ATM et garantir que l’ATM reste l’ancre du smile et que le premier ordre représente uniquement la pente.
+
+# Le second ordre = LA COURBURE DU SMILE
+
+Le second ordre sert à reproduire la convexité du smile FX (le BF).
+
+En FX, le smile n’est jamais linéaire :
+
+- Le Put 25Δ est souvent très au-dessus de l’ATM → skew
+- Le Call 25Δ est parfois moins cher → skew
+
+Mais même quand le skew est faible, la convexité est toujours présente.
+
+Si tu n’ajoutes pas ce second-terme → ton smile est petit et plat.
+
+<img width="646" height="84" alt="Capture d’écran 2025-12-03 à 18 09 42" src="https://github.com/user-attachments/assets/6f090646-f6cc-410e-8f19-56d69b851fbb" />
+
+1) Le carré (𝜎𝑖 − 𝜎2)^2 :
+
+mesure la force du skew entre l’aile (Put25 ou Call25) et l’ATM
+
+- si Put25 ou Call25 sont très éloignés de l’ATM → skew fort → courbure forte
+- si les vols sont proches → skew faible → smile plat
+
+Le carré amplifie cet effet :
+plus le skew est important, plus le smile doit “bomber”.
+
+2) Le terme d1(Ki).d2(Ki) :
+
+C’est un amplificateur de la courbure et la profondeur d’aile :
+
+- 👉 d1 = où ton strike se situe par rapport au forward, mesuré en “écarts de vol”
+- 👉 d2 = la même chose mais ajusté par la vol
+
+En pratique :
+
+- près de l’ATM → d1 et d2 sont petits
+- loin de l’ATM (profond OTM) → d1 et d2 deviennent très grands en valeur absolue
+
+Donc : d1 et d2 mesurent la profondeur d’aile.
+
+- près de l’ATM → d1·d2 est petit → courbure faible
+- dans les ailes profondes → d1·d2 devient très grand → courbure forte
+
+3) Pourquoi seulement 𝑧1 et 𝑧3 ?
+
+Parce que la courbure (butterfly) vient des ailes, pas de l’ATM :
+
+- l’ATM fixe le niveau
+- les ailes (K1 et K3) fixent la convexité du smile
+
+Donc le second ordre ne fait intervenir que les points 25Δ.
+
+➤ Vision marché
+
+Le second ordre sert à reproduire le bombage réel du smile FX :
+
+- correction plus forte dans les ailes
+- courbure amplifiée lorsque Put25/Call25 sont loin de l’ATM
+- smile non linéaire, forme “U” ou “smirkée” réaliste
+
+# La formule finale
+
+<img width="830" height="84" alt="Capture d’écran 2025-12-03 à 18 23 50" src="https://github.com/user-attachments/assets/f5ec5f3b-a20b-4887-be58-688efa5bae89" />
+
+La formule complète dit :
+
+On part du niveau ATM, et on ajoute une correction contrôlée par :
+
+- la pente (first order),
+- la convexité (second order),
+- et amplifie ça en fonction de la profondeur d’aile (d1·d2).
+Le tout sous racine pour rester positif.
+
+Ce qui donne un smile :
+
+- incliné si RR ≠ 0
+- bombé si BF ≠ 0
+- plus extrême dans les ailes
+- stable et sans vol négative
+- cohérent avec Put25, ATM, Call25
